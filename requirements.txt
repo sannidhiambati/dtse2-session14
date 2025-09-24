@@ -1,3 +1,7 @@
 streamlit
-textract
+python-docx
+openpyxl
+python-pptx
+PyPDF2
 markdownify
+beautifulsoup4
