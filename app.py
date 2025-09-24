@@ -3,19 +3,22 @@
 Streamlit Web App for Universal File-to-Text Conversion.
 
 This script creates a simple web interface where users can:
-1. Upload a file (e.g., .docx, .xlsx, .pptx, .pdf, images, .mp3) via a drag-and-drop interface.
-2. The app processes the file into plain text (or Markdown for HTML).
+1. Upload a file (.docx, .xlsx, .pptx, .pdf, .html) via a drag-and-drop interface.
+2. The app processes the file into plain text or Markdown.
 3. It displays a preview of the first 1000 characters of the extracted text.
-4. It provides a download button for the user to save the full text as a markdown file.
+4. It provides a download button to save the full text as a markdown file.
 5. It shows a rendered preview of the markdown output.
 """
 
 # STEP 1: Import necessary libraries
 import streamlit as st
 import os
-import textract
+import tempfile
+from docx import Document
+from openpyxl import load_workbook
+from pptx import Presentation
+from PyPDF2 import PdfReader
 from markdownify import markdownify as md
-import tempfile # To handle temporary file storage
 
 def convert_file_to_text(filepath):
     """
@@ -26,26 +29,48 @@ def convert_file_to_text(filepath):
         filepath (str): The path to the file to be converted.
 
     Returns:
-        str: The extracted text content, or an empty string if conversion fails.
+        str: The extracted text content, or an error string if conversion fails.
     """
     try:
-        # 'textract.process()' handles the conversion of various file types.
-        # It returns the content as bytes, so we decode it to a UTF-8 string.
-        byte_content = textract.process(filepath)
-        text_content = byte_content.decode('utf-8')
-
-        # Check the file extension to decide if it needs HTML-to-Markdown conversion.
         _, extension = os.path.splitext(filepath)
-        if extension.lower() in ['.html', '.htm']:
-            # Convert the extracted HTML into clean, readable Markdown.
-            return md(text_content)
+        extension = extension.lower()
+        text_content = ""
+
+        if extension == '.docx':
+            document = Document(filepath)
+            for paragraph in document.paragraphs:
+                text_content += paragraph.text + '\n'
+        elif extension == '.xlsx':
+            workbook = load_workbook(filepath)
+            for sheet_name in workbook.sheetnames:
+                sheet = workbook[sheet_name]
+                text_content += f"--- Sheet: {sheet_name} ---\n"
+                for row in sheet.iter_rows():
+                    row_text = [str(cell.value) if cell.value is not None else "" for cell in row]
+                    text_content += "\t".join(row_text) + '\n'
+        elif extension == '.pptx':
+            presentation = Presentation(filepath)
+            for slide in presentation.slides:
+                for shape in slide.shapes:
+                    if hasattr(shape, "text"):
+                        text_content += shape.text + '\n'
+        elif extension in ['.html', '.htm']:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                html_content = f.read()
+            text_content = md(html_content)
+        elif extension == '.pdf':
+            reader = PdfReader(filepath)
+            for page in reader.pages:
+                text_content += page.extract_text() + '\n'
         else:
-            # For all other file types, return the plain text.
-            return text_content
+            # This case handles unsupported file types gracefully.
+            return f"Error: Unsupported file type '{extension}'. Please upload a supported file."
+
+        return text_content
+
     except Exception as e:
-        # Return an error message if text extraction fails.
-        # This will be displayed to the user in the Streamlit interface.
-        return f"Error processing file: {e}. Please ensure the file is not corrupted and is a supported format."
+        # Return a user-friendly error message.
+        return f"Error processing file: {e}. Please ensure the file is not corrupted."
 
 # --- Streamlit App UI ---
 
@@ -54,36 +79,32 @@ st.title("Docs to Markdown Converter")
 st.markdown("Drag, drop, and download. It's that simple.")
 
 # [1] Create the file uploader widget
-# This allows users to drag and drop files directly into the browser.
-# Modified to accept only the specified file types.
+# Modified to accept only the file types our conversion function supports.
 uploaded_file = st.file_uploader(
     "Choose a file",
-    type=['pdf', 'pptx', 'docx', 'xlsx', 'jpg', 'jpeg', 'png', 'mp3']
+    type=['pdf', 'pptx', 'docx', 'xlsx', 'html', 'htm']
 )
 
 # Main application logic
 if uploaded_file is not None:
-    # Handle large file sizes gracefully with a warning.
-    # Check if file size is greater than 50MB (50 * 1024 * 1024 bytes)
+    # Handle large file sizes with a warning.
+    # 50MB is used as the threshold here.
     if uploaded_file.size > 50 * 1024 * 1024:
         st.warning("Warning: You have uploaded a large file. Processing may take some time.")
 
     # Use a temporary directory to safely handle the uploaded file
     with tempfile.TemporaryDirectory() as temp_dir:
-        # Create a temporary file path
         temp_filepath = os.path.join(temp_dir, uploaded_file.name)
-
-        # Write the uploaded file's bytes to the temporary file
         with open(temp_filepath, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-        # Show a spinner with the new message while the file is being processed.
+        # Show a spinner while the file is being processed.
         with st.spinner("Converting..."):
             # [2] Process the file into a text string
             full_text = convert_file_to_text(temp_filepath)
 
     # Check if the conversion was successful before proceeding
-    if not full_text.startswith("Error processing file"):
+    if not full_text.startswith("Error"):
         st.success("File processed successfully!")
 
         # [3] Offer a preview display of the first 1000 characters
@@ -106,6 +127,6 @@ if uploaded_file is not None:
             st.markdown(full_text, unsafe_allow_html=True)
 
     else:
-        # If an error occurred during conversion, show it to the user
+        # If an error occurred, show the clear error message to the user.
         st.error(full_text)
 
