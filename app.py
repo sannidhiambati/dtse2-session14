@@ -8,6 +8,7 @@ This script creates a simple web interface where users can:
 3. It displays a preview of the first 1000 characters of the extracted text.
 4. It provides a download button to save the full text as a markdown file.
 5. It shows a rendered preview of the markdown output.
+6. It includes a tab to compare original and converted file sizes.
 """
 
 # STEP 1: Import necessary libraries
@@ -63,70 +64,83 @@ def convert_file_to_text(filepath):
             for page in reader.pages:
                 text_content += page.extract_text() + '\n'
         else:
-            # This case handles unsupported file types gracefully.
             return f"Error: Unsupported file type '{extension}'. Please upload a supported file."
 
         return text_content
 
     except Exception as e:
-        # Return a user-friendly error message.
         return f"Error processing file: {e}. Please ensure the file is not corrupted."
+
+def format_size(size_bytes):
+    """Formats size in bytes to a human-readable string (KB, MB)."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024**2:
+        return f"{size_bytes/1024:.2f} KB"
+    else:
+        return f"{size_bytes/1024**2:.2f} MB"
 
 # --- Streamlit App UI ---
 
-# Set the title for the Streamlit app
 st.title("Docs to Markdown Converter")
 st.markdown("Drag, drop, and download. It's that simple.")
 
-# [1] Create the file uploader widget
-# Modified to accept only the file types our conversion function supports.
 uploaded_file = st.file_uploader(
     "Choose a file",
     type=['pdf', 'pptx', 'docx', 'xlsx', 'html', 'htm']
 )
 
-# Main application logic
 if uploaded_file is not None:
-    # Handle large file sizes with a warning.
-    # 50MB is used as the threshold here.
     if uploaded_file.size > 50 * 1024 * 1024:
         st.warning("Warning: You have uploaded a large file. Processing may take some time.")
 
-    # Use a temporary directory to safely handle the uploaded file
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_filepath = os.path.join(temp_dir, uploaded_file.name)
         with open(temp_filepath, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-        # Show a spinner while the file is being processed.
         with st.spinner("Converting..."):
-            # [2] Process the file into a text string
             full_text = convert_file_to_text(temp_filepath)
 
-    # Check if the conversion was successful before proceeding
     if not full_text.startswith("Error"):
         st.success("File processed successfully!")
 
-        # [3] Offer a preview display of the first 1000 characters
-        st.subheader("Preview (First 1000 characters)")
-        st.text_area("Output Preview", full_text[:1000], height=250, disabled=True)
+        # Create two tabs: one for the converter output and one for size comparison
+        tab1, tab2 = st.tabs(["Converter Output", "File Size Comparison"])
 
-        # Prepare a filename for the downloadable markdown file
-        output_filename = f"converted_{os.path.splitext(uploaded_file.name)[0]}.md"
+        with tab1:
+            st.subheader("Preview (First 1000 characters)")
+            st.text_area("Output Preview", full_text[:1000], height=250, disabled=True)
 
-        # [4] Offer the output file for download as a markdown file.
-        st.download_button(
-           label="Download Markdown File",
-           data=full_text,
-           file_name=output_filename,
-           mime="text/markdown"
-        )
+            output_filename = f"converted_{os.path.splitext(uploaded_file.name)[0]}.md"
 
-        # Show the rendered markdown in an expandable section.
-        with st.expander("Rendered Preview"):
-            st.markdown(full_text, unsafe_allow_html=True)
+            st.download_button(
+               label="Download Markdown File",
+               data=full_text,
+               file_name=output_filename,
+               mime="text/markdown"
+            )
+
+            with st.expander("Rendered Preview"):
+                st.markdown(full_text, unsafe_allow_html=True)
+        
+        with tab2:
+            st.subheader("File Size Comparison")
+            original_size = uploaded_file.size
+            converted_size = len(full_text.encode('utf-8'))
+            
+            # Create a clean table using markdown
+            st.markdown(f"""
+            | File Type | Size |
+            |-----------|------|
+            | Original File | {format_size(original_size)} |
+            | Converted Text | {format_size(converted_size)} |
+            """)
+
+            if original_size > 0:
+                reduction = ((original_size - converted_size) / original_size) * 100
+                st.info(f"Text version is **{reduction:.0f}% smaller** than the original file.")
 
     else:
-        # If an error occurred, show the clear error message to the user.
         st.error(full_text)
 
